@@ -1,0 +1,186 @@
+    using System;
+    using System.Collections.Generic;
+    using System.ComponentModel;
+    using System.Data;
+    using System.Data.SqlClient;
+    using System.Data.Common;
+    using System.Drawing;
+    using System.Linq;
+    using System.Text;
+    using System.Threading.Tasks;
+    using System.Windows.Forms;
+    using System.Data.OleDb;
+
+    namespace LinqSQL
+    {
+        public partial class Principal : Form
+        {
+            public Principal()
+            {
+                InitializeComponent();
+            }
+
+            private void groupBox1_Enter(object sender, EventArgs e)
+            {
+
+            }
+
+            private void BtbExcel_Click(object sender, EventArgs e)
+            {
+                //Variáveis para conexão
+                string connetionString;
+                string excelPath;
+                SqlConnection cnn;
+                //Variáveis para executar consultas na base de dados
+                SqlCommand command;
+                SqlDataReader dataReader;
+                String sql, Output = "";
+                //Variáveis para realizar insert na base de dados
+                SqlDataAdapter adapter = new SqlDataAdapter();
+
+                //Estabelecendo conexão
+                connetionString = @"Data Source=(LocalDB)\TesteCSharp;Initial Catalog=Animais";
+
+                cnn = new SqlConnection(connetionString);
+                cnn.Open();
+            
+                //Agora que estabelecemos a conexão, vamos executar a consulta
+                sql = "SELECT TOP (100) [Nome], [Extinção] FROM [Animais].[dbo].[Mamiferos]";
+
+                command = new SqlCommand(sql, cnn);
+
+                //dataReader = command.ExecuteReader();
+                DataTable tabSQL = ObterTabela(command.ExecuteReader());
+                var convSQL = tabSQL.AsEnumerable();
+
+                //Identificando qual é o caminho
+                excelPath = "C:\\Users\\Hicaro\\source\\repos\\LinqSQL\\Excel\\Animais.xlsx";
+                DataTable tabExcel = ConvertExcelToDataTable(excelPath);
+                var convExcel = tabExcel.AsEnumerable();
+
+                //Agora vamos fazer um leftjoin
+                var results = from dtExcel in convExcel
+                             join dtSQL in convSQL
+                                 on dtExcel.Field<string>("Animal") equals dtSQL.Field<string>("Nome")
+                             into outer
+                             from dtSQL in outer.DefaultIfEmpty()
+                             select new
+                             {
+                                 Animal = dtExcel.Field<string>("Animal"),
+                                 Tipo = dtExcel.Field<string>("Tipo"),
+                                 Extincao = dtExcel.Field<string>("Extinção"),
+                                 // here instead of dtEmpRow you should check dtEmpSal
+                                 Nome = (dtSQL == null) ? null : dtSQL.Field<string>("Nome")
+                             };
+
+                //Limpando a variável SQL
+                sql = "";
+
+                foreach(var result in results)
+                {
+                    if (result.Nome == null)
+                    {
+                        sql = sql + "INSERT INTO Animais.dbo.Mamiferos(Nome, Extinção, Tipo) Values('" + result.Animal + "', '" + result.Extincao + "' , '" + result.Tipo + "'); ";
+                    }
+                }
+
+                //Agora vou entrar com o insert
+                if (sql != "")
+                {
+                    command.Dispose();
+                    command = new SqlCommand(sql, cnn);
+                    adapter.InsertCommand.ExecuteNonQuery();
+                }
+
+                //while (dataReader.Read()){
+                //    Output = Output + dataReader.GetValue(0) + " - " + dataReader.GetValue(1) + "\n";
+                //}
+
+                //Mostrando o resultado obtido
+                //MessageBox.Show(Output);
+
+                //Fechando as conexões
+                //dataReader.Close();
+                command.Dispose();
+
+                //Agora vamos fazer insert na base de dados
+                //sql = "INSERT INTO dbo.Mamiferos(Nome, Extinção, Tipo) Values('Cavalo', 'Não', 'Terrestre')";
+
+                //command = new SqlCommand(sql, cnn);
+
+                //adapter.InsertCommand = new SqlCommand(sql, cnn);
+                //adapter.InsertCommand.ExecuteNonQuery();
+
+                ////Fechando as conexões
+                //dataReader.Close();
+                //command.Dispose();
+                cnn.Close();
+            }
+
+            public DataTable ObterTabela(DbDataReader reader)
+            {
+                DataTable tbEsquema = reader.GetSchemaTable();
+                DataTable tbRetorno = new DataTable();
+
+                foreach (DataRow r in tbEsquema.Rows)
+                {
+                    if (!tbRetorno.Columns.Contains(r["ColumnName"].ToString()))
+                    {
+                        DataColumn col = new DataColumn()
+                        {
+                            ColumnName = r["ColumnName"].ToString(),
+                            Unique = Convert.ToBoolean(r["IsUnique"]),
+                            AllowDBNull = Convert.ToBoolean(r["AllowDBNull"]),
+                            ReadOnly = Convert.ToBoolean(r["IsReadOnly"])
+                        };
+                        tbRetorno.Columns.Add(col);
+                    }
+                }
+
+                while (reader.Read())
+                {
+                    DataRow novaLinha = tbRetorno.NewRow();
+                    for (int i = 0; i < tbRetorno.Columns.Count; i++)
+                    {
+                        novaLinha[i] = reader.GetValue(i);
+                    }
+                    tbRetorno.Rows.Add(novaLinha);
+                }
+
+                return tbRetorno;
+            }
+
+            public static DataTable ConvertExcelToDataTable(string FileName)
+            {
+                DataTable dtResult = null;
+                int totalSheet = 0; //No of sheets on excel file  
+                using (OleDbConnection objConn = new OleDbConnection(@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + FileName + ";Extended Properties='Excel 12.0;HDR=YES;IMEX=1;';"))
+                {
+                    objConn.Open();
+                    OleDbCommand cmd = new OleDbCommand();
+                    OleDbDataAdapter oleda = new OleDbDataAdapter();
+                    DataSet ds = new DataSet();
+                    DataTable dt = objConn.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, null);
+                    string sheetName = string.Empty;
+                    if (dt != null)
+                    {
+                        var tempDataTable = (from dataRow in dt.AsEnumerable()
+                                             where !dataRow["TABLE_NAME"].ToString().Contains("FilterDatabase")
+                                             select dataRow).CopyToDataTable();
+                        dt = tempDataTable;
+                        totalSheet = dt.Rows.Count;
+                        sheetName = dt.Rows[0]["TABLE_NAME"].ToString();
+                    }
+                    cmd.Connection = objConn;
+                    cmd.CommandType = CommandType.Text;
+                    cmd.CommandText = "SELECT * FROM [" + sheetName + "]";
+                    oleda = new OleDbDataAdapter(cmd);
+                    oleda.Fill(ds, "excelData");
+                    dtResult = ds.Tables["excelData"];
+                    objConn.Close();
+                    return dtResult; //Returning Dattable  
+                }
+            }
+
+        }
+    }
